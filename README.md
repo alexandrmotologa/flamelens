@@ -1,6 +1,21 @@
-# flamelens
+<p align="center">
+  <img src="docs/images/logo.png?raw=true" alt="FlameLens Logo" width="140" style="border-radius: 28px;" />
+</p>
 
-Interactive memory allocation profiler and terminal FlameGraph engine.
+<h1 align="center">flamelens</h1>
+
+<p align="center">
+  <strong>Interactive memory allocation profiler and terminal FlameGraph engine.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/alexandrmotologa/flamelens/actions"><img src="https://img.shields.io/badge/CI-passing-2ea44f?style=flat-square&logo=githubactions&logoColor=white" alt="CI Status" /></a>
+  <a href="https://pypi.org/project/flamelens/"><img src="https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue?style=flat-square&logo=python&logoColor=white" alt="Python Support" /></a>
+  <a href="https://speedscope.app"><img src="https://img.shields.io/badge/speedscope-compatible-f59e0b?style=flat-square" alt="Speedscope Compatible" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-informational?style=flat-square" alt="License" /></a>
+</p>
+
+<br />
 
 flamelens analyzes heap allocations in Python 3.12+ applications and Java Flight Recorder (JFR) recordings. It renders interactive FlameGraphs directly in your terminal, detects objects retained across garbage collection cycles, and generates differential graphs between baseline and regression runs.
 
@@ -83,27 +98,23 @@ Render directly in standard terminal output:
 flamelens view profile.json --format ascii
 ```
 
-Output example:
-
-```text
-Root: 120.0 MB total allocated
-├── OrderController.handle [105.0 MB, 87.5%]
-│   ├── OrderCommandService.execute [90.0 MB, 75.0%]
-│   │   ├── Hibernate.loadLazyList [80.0 MB, 66.7%] (Bottleneck)
-│   │   └── Order.create [10.0 MB, 8.3%]
-│   └── AuthFilter.validate [15.0 MB, 12.5%]
-└── HealthCheck.ping [15.0 MB, 12.5%]
-```
+<p align="center">
+  <img src="docs/images/terminal_flamegraph.png?raw=true" alt="FlameLens ASCII FlameGraph" width="100%" />
+</p>
 
 ### 4. Compare profiles with FlameDiff
 
 Compare a baseline profile with a candidate profile:
 
 ```bash
-flamelens diff baseline.json regression.json
+flamelens diff baseline.json candidate.json
 ```
 
-Blocks with increased allocations appear in red, while optimized frames appear in blue.
+Blocks with increased allocations appear in red, while optimized frames appear in blue:
+
+<p align="center">
+  <img src="docs/images/diff_flamegraph.png?raw=true" alt="FlameLens FlameDiff Comparison" width="100%" />
+</p>
 
 ### 5. Parse Java Flight Recorder (.jfr) files
 
@@ -125,6 +136,10 @@ flamelens export profile.json --format html --output report.html
 flamelens export profile.json --format speedscope --output profile.speedscope.json
 ```
 
+<p align="center">
+  <img src="docs/images/flamegraph.png?raw=true" alt="FlameLens Standalone Interactive HTML FlameGraph" width="100%" />
+</p>
+
 ### 7. Run Top Culprit and Bottleneck Advisor
 
 Analyze profile data to pinpoint functions consuming disproportionate memory and view targeted refactoring advice:
@@ -132,6 +147,10 @@ Analyze profile data to pinpoint functions consuming disproportionate memory and
 ```bash
 flamelens analyze profile.json
 ```
+
+<p align="center">
+  <img src="docs/images/advisor_report.png?raw=true" alt="FlameLens Optimization Advisory Report" width="100%" />
+</p>
 
 ### 8. Enforce CI/CD quality gates
 

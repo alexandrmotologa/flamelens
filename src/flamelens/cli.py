@@ -31,7 +31,20 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
-console = Console()
+
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+console = Console(legacy_windows=False)
 
 
 def version_callback(value: bool) -> None:
