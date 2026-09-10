@@ -28,6 +28,9 @@ htmlcov/
 profile.json
 flame_report.html
 
+# Whitelist test fixtures
+!tests/fixtures/**
+
 # IDE configuration
 .vscode/
 .idea/

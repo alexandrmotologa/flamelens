@@ -1,0 +1,4 @@
+root;OrderController.handle;OrderCommandService.execute;Hibernate.loadLazyList 83886080
+root;OrderController.handle;OrderCommandService.execute;Order.create 10485760
+root;OrderController.handle;AuthFilter.validate 15728640
+root;HealthCheck.ping 15728640
