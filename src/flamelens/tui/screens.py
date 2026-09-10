@@ -19,6 +19,7 @@ class HelpModal(ModalScreen):
         table.add_row("↑ / ↓", "Navigate through call frames")
         table.add_row("Enter", "Zoom into selected frame (rebase as root)")
         table.add_row("Escape", "Zoom out to previous root or reset zoom")
+        table.add_row("m", "Toggle between Allocation Churn and Retained Heap")
         table.add_row("/", "Focus search bar (highlights matching frames)")
         table.add_row("d", "Toggle details panel")
         table.add_row("?", "Show this help screen")

@@ -1,4 +1,4 @@
-"""FlameLens CLI: Profiler, TUI viewer, Differential engine, and Exporter."""
+"""FlameLens CLI: Profiler, TUI viewer, Differential engine, Advisor, and Exporter."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 
 from flamelens import __version__
+from flamelens.analysis.advisor import Advisor
 from flamelens.config import ProfilerConfig
 from flamelens.core.differential import compare_trees
 from flamelens.core.folded import load_folded_file, save_folded_file
@@ -21,6 +22,7 @@ from flamelens.profiler.jfr_parser import parse_jfr_file
 from flamelens.profiler.monitor import AllocationMonitor
 from flamelens.render.ascii_flame import render_ascii_flamegraph
 from flamelens.render.html_exporter import export_to_html
+from flamelens.render.speedscope import export_to_speedscope
 from flamelens.tui.app import FlameLensApp
 
 app = typer.Typer(
@@ -57,29 +59,43 @@ def main(
     pass
 
 
-def _load_profile(path: Path) -> StackTree:
-    """Load profile tree from JSON, JFR, or Brendan Gregg folded stack files."""
+def _load_profile(path: Path, metric: str = "churn") -> tuple[StackTree, StackTree | None]:
+    """Load profile tree(s) from JSON, JFR, or Brendan Gregg folded stack files.
+
+    Returns:
+        (active_tree, retained_tree_or_none)
+    """
     if not path.exists():
         console.print(f"[bold red]Error:[/bold red] File not found: {path}")
         raise typer.Exit(code=1)
 
     suffix = path.suffix.lower()
     if suffix == ".jfr":
-        return parse_jfr_file(path)
+        tree = parse_jfr_file(path)
+        return tree, None
     elif suffix in (".folded", ".txt", ".stacks"):
-        return load_folded_file(path)
+        tree = load_folded_file(path)
+        return tree, None
     else:
-        # Default to JSON
         try:
             content = path.read_text(encoding="utf-8")
             data = json.loads(content)
-            # Handle both raw StackTree dict and wrapped profile dict with leak reports
+
+            churn_tree = StackTree.from_dict(data["churn_tree"]) if "churn_tree" in data else None
+            retained_tree = (
+                StackTree.from_dict(data["retained_tree"]) if "retained_tree" in data else None
+            )
+
+            if churn_tree and retained_tree:
+                active = churn_tree if metric == "churn" else retained_tree
+                return active, retained_tree
+
             if "tree" in data:
-                return StackTree.from_dict(data["tree"])
-            return StackTree.from_dict(data)
+                return StackTree.from_dict(data["tree"]), None
+            return StackTree.from_dict(data), None
         except Exception:
-            # Fallback to folded
-            return load_folded_file(path)
+            tree = load_folded_file(path)
+            return tree, None
 
 
 @app.command()
@@ -106,6 +122,28 @@ def profile(
     threshold: Annotated[
         float, typer.Option("--threshold", help="Minimum allocation percentage to report.")
     ] = 0.1,
+    max_mem: Annotated[
+        float,
+        typer.Option(
+            "--max-mem", help="CI Quality Gate: maximum allowed memory in MB (0 disables)."
+        ),
+    ] = 0.0,
+    max_leak_rate: Annotated[
+        float,
+        typer.Option(
+            "--max-leak-rate", help="CI Quality Gate: maximum allowed leak rate in MB/checkpoint."
+        ),
+    ] = 0.0,
+    fail_on_leak: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-leak", help="CI Quality Gate: fail with exit code 2 if leaks detected."
+        ),
+    ] = False,
+    spike_threshold: Annotated[
+        float,
+        typer.Option("--spike-threshold", help="Memory surge threshold in MB to record a spike."),
+    ] = 5.0,
     format_mode: Annotated[
         str,
         typer.Option("-f", "--format", help="Display mode after execution (ascii, tui, or none)."),
@@ -114,7 +152,7 @@ def profile(
         Optional[list[str]], typer.Argument(help="Arguments forwarded to the profiled script.")
     ] = None,
 ) -> None:
-    """Execute a target Python script and record memory allocations."""
+    """Execute a target Python script and record memory allocations with quality gates."""
     if not script.exists():
         console.print(f"[bold red]Error:[/bold red] Script not found: {script}")
         raise typer.Exit(code=1)
@@ -125,9 +163,12 @@ def profile(
         checkpoints=checkpoints,
         max_depth=max_depth,
         threshold=threshold,
+        max_mem_mb=max_mem,
+        max_leak_rate_mb=max_leak_rate,
+        fail_on_leak=fail_on_leak,
+        spike_threshold_mb=spike_threshold,
     )
 
-    # Prepare argv for the target script
     original_argv = list(sys.argv)
     target_argv = [str(script)] + (script_args or [])
 
@@ -143,21 +184,23 @@ def profile(
 
         monitor.start()
 
-        # Run script in its own namespace as __main__
         try:
             runpy.run_path(str(script), run_name="__main__")
         finally:
-            tree = monitor.stop()
+            active_tree = monitor.stop()
             leak_report = leak_detector.stop() if leak_detector else None
 
     finally:
         sys.argv = original_argv
 
-    # Save output data
+    # Save output data with dual metrics and spikes
     payload = {
-        "tree": tree.to_dict(),
-        "total_bytes": tree.total_bytes,
-        "total_allocations": tree.total_allocations,
+        "tree": active_tree.to_dict(),
+        "churn_tree": monitor.churn_tree.to_dict(),
+        "retained_tree": monitor.retained_tree.to_dict(),
+        "total_bytes": active_tree.total_bytes,
+        "total_allocations": active_tree.total_allocations,
+        "spikes": [s.to_dict() for s in monitor.spikes],
     }
     if leak_report:
         payload["leak_report"] = leak_report.to_dict()
@@ -169,11 +212,41 @@ def profile(
     if leak_report and leak_report.candidates:
         console.print(leak_report.format_summary())
 
+    if monitor.spikes:
+        console.print(f"[bold red]HIGH-WATERMARK SPIKES DETECTED:[/bold red] {len(monitor.spikes)}")
+
     if format_mode == "ascii":
-        console.print("\n" + render_ascii_flamegraph(tree, max_depth=16, threshold_pct=threshold))
+        console.print(
+            "\n" + render_ascii_flamegraph(active_tree, max_depth=16, threshold_pct=threshold)
+        )
     elif format_mode == "tui":
-        tui_app = FlameLensApp(tree)
+        tui_app = FlameLensApp(active_tree, retained_tree=monitor.retained_tree)
         tui_app.run()
+
+    # --- CI Quality Gate Checks ---
+    breaches: list[str] = []
+    total_mb = active_tree.total_bytes / (1024 * 1024)
+
+    if max_mem > 0.0 and total_mb > max_mem:
+        breaches.append(f"Memory budget exceeded: {total_mb:.2f} MB > limit {max_mem:.2f} MB")
+
+    if leak_report and leak_report.candidates:
+        if fail_on_leak:
+            breaches.append(
+                f"Memory leak candidates detected: {len(leak_report.candidates)} leaks found"
+            )
+        if max_leak_rate > 0.0:
+            rate = leak_report.total_leaked_mb / max(1, leak_report.checkpoints_count)
+            if rate > max_leak_rate:
+                breaches.append(
+                    f"Leak rate exceeded: {rate:.2f} MB/checkpoint > limit {max_leak_rate:.2f} MB/checkpoint"
+                )
+
+    if breaches:
+        console.print("\n[bold red]CI QUALITY GATE FAILED:[/bold red]")
+        for b in breaches:
+            console.print(f"  [red]✖[/red] {b}")
+        raise typer.Exit(code=2)
 
 
 @app.command()
@@ -184,20 +257,76 @@ def view(
     format_mode: Annotated[
         str, typer.Option("-f", "--format", help="Viewer format (tui or ascii).")
     ] = "tui",
+    metric: Annotated[
+        str,
+        typer.Option(
+            "-m", "--metric", help="Metric to display: churn (throughput) or retained (live heap)."
+        ),
+    ] = "churn",
     threshold: Annotated[
         float, typer.Option("--threshold", help="Minimum percentage to render.")
     ] = 0.5,
     max_depth: Annotated[int, typer.Option("--max-depth", help="Maximum depth to display.")] = 16,
 ) -> None:
     """Inspect and visualize a previously recorded profile or JFR binary."""
-    tree = _load_profile(profile_path)
+    tree, retained_tree = _load_profile(profile_path, metric=metric)
 
     if format_mode == "ascii":
         output = render_ascii_flamegraph(tree, max_depth=max_depth, threshold_pct=threshold)
         console.print(output)
     else:
-        tui_app = FlameLensApp(tree)
+        tui_app = FlameLensApp(tree, retained_tree=retained_tree)
         tui_app.run()
+
+
+@app.command()
+def analyze(
+    profile_path: Annotated[
+        Path, typer.Argument(help="Path to profile JSON, JFR, or folded file.")
+    ],
+    min_impact_pct: Annotated[
+        float,
+        typer.Option("--min-impact-pct", help="Minimum impact percentage to flag as a culprit."),
+    ] = 10.0,
+    metric: Annotated[
+        str, typer.Option("-m", "--metric", help="Metric to analyze (churn or retained).")
+    ] = "churn",
+) -> None:
+    """Inspect profile bottlenecks and produce actionable refactoring advice."""
+    tree, _ = _load_profile(profile_path, metric=metric)
+    report = Advisor.analyze(tree, min_impact_pct=min_impact_pct)
+    console.print(report.format_report())
+
+
+@app.command()
+def spikes(
+    profile_path: Annotated[Path, typer.Argument(help="Path to profile JSON file.")],
+) -> None:
+    """List isolated high-watermark memory surge spikes recorded during profiling."""
+    if not profile_path.exists():
+        console.print(f"[bold red]Error:[/bold red] File not found: {profile_path}")
+        raise typer.Exit(code=1)
+
+    data = json.loads(profile_path.read_text(encoding="utf-8"))
+    spike_list = data.get("spikes", [])
+
+    if not spike_list:
+        console.print("[green]No high-watermark memory surges detected in this profile.[/green]")
+        return
+
+    console.print(f"[bold red]HIGH-WATERMARK SPIKE INCIDENTS: {len(spike_list)}[/bold red]")
+    console.print("=" * 80)
+
+    for i, s in enumerate(spike_list, 1):
+        console.print(
+            f"{i}. Surge: +{s.get('delta_mb')} MB | Current: {s.get('current_mb')} MB | "
+            f"Peak: {s.get('peak_mb')} MB"
+        )
+        stack = s.get("call_stack", [])
+        if stack:
+            preview = " -> ".join(f.get("name", "unknown") for f in stack[-3:])
+            console.print(f"   Origin: {preview}")
+        console.print("-" * 80)
 
 
 @app.command()
@@ -211,13 +340,16 @@ def diff(
     format_mode: Annotated[
         str, typer.Option("-f", "--format", help="Diff output format (ascii or json).")
     ] = "ascii",
+    metric: Annotated[
+        str, typer.Option("-m", "--metric", help="Metric to compare (churn or retained).")
+    ] = "churn",
     output: Annotated[
         Optional[Path], typer.Option("-o", "--output", help="Optional path to save diff report.")
     ] = None,
 ) -> None:
     """Compute and display allocation differential between two profiles (FlameDiff)."""
-    base_tree = _load_profile(baseline)
-    cand_tree = _load_profile(candidate)
+    base_tree, _ = _load_profile(baseline, metric=metric)
+    cand_tree, _ = _load_profile(candidate, metric=metric)
 
     diff_tree = compare_trees(base_tree, cand_tree)
 
@@ -274,18 +406,27 @@ def export(
         "flame_report.html"
     ),
     format_mode: Annotated[
-        str, typer.Option("-f", "--format", help="Export target format (html, folded, json).")
+        str,
+        typer.Option(
+            "-f", "--format", help="Export target format (html, speedscope, folded, json)."
+        ),
     ] = "html",
+    metric: Annotated[
+        str, typer.Option("-m", "--metric", help="Metric to export (churn or retained).")
+    ] = "churn",
     title: Annotated[
-        str, typer.Option("--title", help="Title for HTML export report.")
+        str, typer.Option("--title", help="Title for export report.")
     ] = "FlameLens Memory Profile",
 ) -> None:
-    """Convert and export profile into standalone HTML, collapsed stacks, or JSON."""
-    tree = _load_profile(input_path)
+    """Convert and export profile into standalone HTML, Speedscope JSON, folded stacks, or JSON."""
+    tree, _ = _load_profile(input_path, metric=metric)
 
     if format_mode == "html":
         export_to_html(tree, output, title=title)
         console.print(f"[green]Standalone interactive HTML exported to:[/green] {output}")
+    elif format_mode == "speedscope":
+        export_to_speedscope(tree, output, name=title)
+        console.print(f"[green]Speedscope JSON exported to:[/green] {output}")
     elif format_mode == "folded":
         save_folded_file(tree, output)
         console.print(f"[green]Brendan Gregg folded stacks saved to:[/green] {output}")

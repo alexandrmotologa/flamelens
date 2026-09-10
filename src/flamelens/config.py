@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class ProfilerConfig(BaseModel):
-    """Configuration options for allocation profiling and aggregation."""
+    """Configuration options for allocation profiling, quality gates, and aggregation."""
 
     sample_rate: int = Field(
         default=0,
@@ -37,11 +37,30 @@ class ProfilerConfig(BaseModel):
         ge=0.01,
         description="Minimum net memory increase in megabytes to qualify as a leak candidate.",
     )
+    max_mem_mb: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Maximum permissible memory budget in MB for CI quality gates (0 disables).",
+    )
+    max_leak_rate_mb: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Maximum permissible leak rate in MB per checkpoint for CI quality gates.",
+    )
+    fail_on_leak: bool = Field(
+        default=False,
+        description="Exit with non-zero error code if any leak candidates are identified.",
+    )
+    spike_threshold_mb: float = Field(
+        default=5.0,
+        ge=0.1,
+        description="Memory surge threshold in megabytes to trigger a high-watermark spike snapshot.",
+    )
     include_internal: bool = Field(
         default=False,
         description="Whether to include flamelens and standard library internal frames.",
     )
     ignore_patterns: list[str] = Field(
-        default_factory=lambda: ["flamelens", "site-packages/pytest", "threading.py"],
+        default_factory=lambda: ["flamelens", "site-packages", "threading.py", "importlib"],
         description="Substrings of filenames or modules to ignore from stack traces.",
     )

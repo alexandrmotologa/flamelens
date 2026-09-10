@@ -56,16 +56,25 @@ class FlameLensApp(App):
         Binding("/", "toggle_search", "Search"),
         Binding("enter", "zoom_in", "Zoom In"),
         Binding("escape", "zoom_out", "Zoom Out"),
+        Binding("m", "toggle_metric", "Toggle Churn/Retained"),
         Binding("d", "toggle_details", "Toggle Details"),
         Binding("question_mark", "help", "Help"),
     ]
 
-    def __init__(self, tree: StackTree, **kwargs) -> None:
+    def __init__(
+        self,
+        tree: StackTree,
+        retained_tree: StackTree | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
-        self.original_tree = tree
-        self.current_tree = tree
+        self.churn_tree = tree
+        self.retained_tree = retained_tree or tree
+        self.active_metric = "churn"  # or "retained"
+        self.original_tree = self.churn_tree
+        self.current_tree = self.churn_tree
         self.zoom_history: list[StackTree] = []
-        self.zoom_path: list[str] = ["Root"]
+        self.zoom_path: list[str] = ["Root (Churn)"]
         self.selected_node: StackNode | None = None
         self.search_filter: str = ""
 
@@ -169,6 +178,23 @@ class FlameLensApp(App):
 
             breadcrumbs = self.query_one(BreadcrumbBar)
             breadcrumbs.update_path(self.zoom_path)
+
+    def action_toggle_metric(self) -> None:
+        """Switch between allocation churn and live retained heap trees."""
+        if self.active_metric == "churn":
+            self.active_metric = "retained"
+            self.current_tree = self.retained_tree
+            self.zoom_history.clear()
+            self.zoom_path = ["Root (Retained)"]
+        else:
+            self.active_metric = "churn"
+            self.current_tree = self.churn_tree
+            self.zoom_history.clear()
+            self.zoom_path = ["Root (Churn)"]
+
+        self._refresh_tree_view()
+        breadcrumbs = self.query_one(BreadcrumbBar)
+        breadcrumbs.update_path(self.zoom_path)
 
     def action_toggle_details(self) -> None:
         """Toggle visibility of the details panel."""

@@ -16,6 +16,7 @@ from flamelens.config import ProfilerConfig
 from flamelens.core.frame import StackFrame
 from flamelens.core.stack_tree import StackTree
 from flamelens.profiler.sampler import PoissonSampler
+from flamelens.profiler.spike_detector import SpikeDetector, SpikeIncident
 
 
 class AllocationMonitor:
@@ -23,8 +24,11 @@ class AllocationMonitor:
 
     def __init__(self, config: ProfilerConfig | None = None) -> None:
         self.config = config or ProfilerConfig()
-        self.tree = StackTree(root_name="Total Memory Allocated")
+        self.churn_tree = StackTree(root_name="Total Allocation Churn")
+        self.retained_tree = StackTree(root_name="Live Retained Memory")
+        self.tree = self.churn_tree
         self.sampler = PoissonSampler(sample_rate=self.config.sample_rate)
+        self.spike_detector = SpikeDetector(threshold_mb=self.config.spike_threshold_mb)
 
         self._tool_id: int | None = None
         self._is_active = False
@@ -35,6 +39,10 @@ class AllocationMonitor:
         self._func_name_cache: dict[tuple[str, int], str] = {}
         self._file_exists_cache: dict[str, bool] = {}
         self._seen_codes: set[int] = set()
+
+    @property
+    def spikes(self) -> list[SpikeIncident]:
+        return self.spike_detector.spikes
 
     def _on_py_start(self, code: CodeType, offset: int) -> None:
         """Index code object lines to resolve accurate function qualified names."""
@@ -96,7 +104,13 @@ class AllocationMonitor:
             curr = curr.f_back
 
         if raw_frames:
-            self.tree.insert_stack(list(reversed(raw_frames)), size)
+            stack = list(reversed(raw_frames))
+            self.churn_tree.insert_stack(stack, size)
+
+        # Check for spike event
+        if tracemalloc.is_tracing():
+            curr_mem, peak_mem = tracemalloc.get_traced_memory()
+            self.spike_detector.check(curr_mem, peak_mem, frame=frame)
 
     def start(self) -> None:
         """Start tracking memory allocations and runtime call events."""
@@ -105,7 +119,9 @@ class AllocationMonitor:
                 return
 
             self._is_active = True
-            self.tree = StackTree(root_name="Total Memory Allocated")
+            self.churn_tree = StackTree(root_name="Total Allocation Churn")
+            self.retained_tree = StackTree(root_name="Live Retained Memory")
+            self.tree = self.churn_tree
 
             # Start tracemalloc with specified stack depth
             if not tracemalloc.is_tracing():
@@ -121,12 +137,12 @@ class AllocationMonitor:
                 )
 
     def stop(self) -> StackTree:
-        """Stop tracking and finalize the aggregated StackTree."""
+        """Stop tracking and finalize both churn and retained StackTrees."""
         with self._lock:
             if not self._is_active:
                 return self.tree
 
-            # Collect snapshot of memory allocations
+            # Collect snapshot of retained memory allocations
             if tracemalloc.is_tracing():
                 snapshot = tracemalloc.take_snapshot()
                 self._process_snapshot(snapshot)
@@ -142,6 +158,11 @@ class AllocationMonitor:
                 self._tool_id = None
 
             self._is_active = False
+            # Select tree with highest captured allocation volume
+            if self.retained_tree.total_bytes > self.churn_tree.total_bytes:
+                self.tree = self.retained_tree
+            else:
+                self.tree = self.churn_tree
             return self.tree
 
     @contextmanager
@@ -170,7 +191,6 @@ class AllocationMonitor:
             self._file_exists_cache[filename] = exists
 
         if exists:
-            # Check directly with linecache
             line = linecache.getline(filename, lineno).strip()
             m = re.match(r"^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)", line)
             if m:
@@ -178,7 +198,6 @@ class AllocationMonitor:
                 self._func_name_cache[key] = func_name
                 return func_name
 
-        # Fallback to module name
         stem = os.path.splitext(os.path.basename(filename))[0]
         func_name = f"{stem}:{lineno}"
         self._func_name_cache[key] = func_name
@@ -202,7 +221,7 @@ class AllocationMonitor:
         return False
 
     def _process_snapshot(self, snapshot: tracemalloc.Snapshot) -> None:
-        """Aggregate tracemalloc traces into the prefix tree with fast filtering."""
+        """Aggregate tracemalloc traces into both retained and churn trees."""
         for trace in snapshot.traces:
             allocated_bytes = trace.size
             if allocated_bytes <= 0:
@@ -228,4 +247,6 @@ class AllocationMonitor:
                 )
 
             if frames:
-                self.tree.insert_stack(frames, allocated_bytes)
+                self.retained_tree.insert_stack(frames, allocated_bytes)
+                if self.churn_tree.total_bytes < self.retained_tree.total_bytes:
+                    self.churn_tree.insert_stack(frames, allocated_bytes)

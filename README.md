@@ -7,10 +7,15 @@ flamelens analyzes heap allocations in Python 3.12+ applications and Java Flight
 ## Key features
 
 - Low overhead tracking: uses Python 3.12 PEP 669 monitoring and tracemalloc to trace allocations with minimal runtime drag.
-- Interactive terminal UI: zoom into subtrees, search functions with live highlighting, and inspect call sites using Textual.
+- Dual-metric mode: switch seamlessly between allocation churn (throughput volume) and retained heap (live memory leaks).
+- Interactive terminal UI: zoom into subtrees, toggle metrics with the 'm' key, search functions with live highlighting, and inspect call sites using Textual.
 - Compact ASCII rendering: prints non-interactive flame charts to stdout for quick reviews in CI logs and remote shells.
+- Bottleneck and culprit advisor: automatically isolates functions driving more than 50% of allocations and outputs targeted code refactoring advice.
+- CI/CD quality gates: enforces memory limits with `--max-mem` and `--max-leak-rate`, returning non-zero exit codes to fail builds on memory regressions.
+- High-watermark spike detection: captures isolated stack traces during abrupt memory surges for instant root cause diagnosis.
 - Memory leak detection: identifies allocation sites whose net retained bytes increase monotonically across garbage collection cycles.
 - JFR binary ingestion: parses JDK Flight Recorder allocation events from Java 21+ services without external dependencies.
+- Speedscope compatibility: exports directly to the speedscope.app JSON schema for browser-based flame chart sharing.
 - Differential flame graphs: compares two profiles side by side to pinpoint regressions and optimizations.
 - Folded stack compatibility: imports and exports Brendan Gregg collapsed stack files (`funcA;funcB 4096`).
 - Standalone HTML export: outputs single-file interactive SVG and HTML charts for sharing.
@@ -108,12 +113,40 @@ Inspect memory allocations from Java services:
 flamelens view recording.jfr
 ```
 
-### 6. Export to interactive HTML
-
-Generate a self-contained HTML file:
+### 6. Export to interactive HTML or Speedscope
+ 
+Generate a self-contained HTML file or export to Speedscope JSON:
 
 ```bash
+# Standalone interactive SVG/HTML
 flamelens export profile.json --format html --output report.html
+
+# Speedscope JSON format (open at https://www.speedscope.app)
+flamelens export profile.json --format speedscope --output profile.speedscope.json
+```
+
+### 7. Run Top Culprit and Bottleneck Advisor
+
+Analyze profile data to pinpoint functions consuming disproportionate memory and view targeted refactoring advice:
+
+```bash
+flamelens analyze profile.json
+```
+
+### 8. Enforce CI/CD quality gates
+
+Fail CI pipeline builds if an application exceeds a peak memory threshold or leaks memory:
+
+```bash
+flamelens profile worker.py --max-mem 250.0 --max-leak-rate 2.0 --fail-on-leak
+```
+
+### 9. Inspect memory spikes
+
+Review sudden memory surges recorded during execution:
+
+```bash
+flamelens spikes profile.json
 ```
 
 ## Architecture overview
