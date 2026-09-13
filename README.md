@@ -22,7 +22,7 @@ flamelens analyzes heap allocations in Python 3.12+ applications and Java Flight
 ## Key features
 
 - Low overhead tracking: uses Python 3.12 PEP 669 monitoring and tracemalloc to trace allocations with minimal runtime drag.
-- Dual-metric mode: switch seamlessly between allocation churn (throughput volume) and retained heap (live memory leaks).
+- Dual-metric mode: switch between allocation churn (throughput volume) and retained heap (live memory leaks).
 - Interactive terminal UI: zoom into subtrees, toggle metrics with the 'm' key, search functions with live highlighting, and inspect call sites using Textual.
 - Compact ASCII rendering: prints non-interactive flame charts to stdout for quick reviews in CI logs and remote shells.
 - Bottleneck and culprit advisor: automatically isolates functions driving more than 50% of allocations and outputs targeted code refactoring advice.
