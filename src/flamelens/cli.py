@@ -451,5 +451,13 @@ def export(
         raise typer.Exit(code=1)
 
 
+@app.command("version")
+def version_command() -> None:
+    """Show version and exit."""
+    console.print(
+        f"[bold orange1]FlameLens[/bold orange1] version [bold white]{__version__}[/bold white]"
+    )
+
+
 if __name__ == "__main__":
     app()

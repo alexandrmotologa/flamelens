@@ -14,6 +14,14 @@ def test_cli_version():
     assert result.exit_code == 0
     assert "FlameLens version" in result.stdout
 
+    result_short = runner.invoke(app, ["-v"])
+    assert result_short.exit_code == 0
+    assert "FlameLens version" in result_short.stdout
+
+    result_cmd = runner.invoke(app, ["version"])
+    assert result_cmd.exit_code == 0
+    assert "FlameLens version" in result_cmd.stdout
+
 
 def test_cli_profile_and_view(tmp_path):
     fixture_script = Path("tests/fixtures/sample_leak_app.py")

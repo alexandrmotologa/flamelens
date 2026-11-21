@@ -19,6 +19,10 @@
 
 flamelens analyzes heap allocations in Python 3.12+ applications and Java Flight Recorder (JFR) recordings. It renders interactive FlameGraphs directly in your terminal, detects objects retained across garbage collection cycles, and generates differential graphs between baseline and regression runs.
 
+<p align="center">
+  <img src="docs/images/flamelens_demo.gif" alt="FlameLens Interactive Terminal Profiler & FlameGraph Engine Demo" width="100%" />
+</p>
+
 ## Key features
 
 - Low overhead tracking: uses Python 3.12 PEP 669 monitoring and tracemalloc to trace allocations with minimal runtime drag.

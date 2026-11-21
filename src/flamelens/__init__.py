@@ -1,6 +1,6 @@
 """FlameLens: Interactive Memory Profiler & Terminal FlameGraph Engine."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from flamelens.config import ProfilerConfig
 from flamelens.core.frame import StackFrame

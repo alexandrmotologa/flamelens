@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flamelens"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive memory profiler and terminal FlameGraph engine"
 readme = "README.md"
 authors = [
@@ -45,4 +45,5 @@ ignore = ["E501"]
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
